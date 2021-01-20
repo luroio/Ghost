@@ -7,7 +7,6 @@ const {i18n} = require('../../lib/common');
 const errors = require('@tryghost/errors');
 let defaults;
 let paginationUtils;
-let pagination;
 
 /**
  * ### Default pagination values
@@ -147,7 +146,7 @@ paginationUtils = {
  * Extends `bookshelf.Model` with `fetchPage`
  * @param {Bookshelf} bookshelf \- the instance to plug into
  */
-pagination = function pagination(bookshelf) {
+const pagination = function pagination(bookshelf) {
     // Extend updates the first object passed to it, no need for an assignment
     _.extend(bookshelf.Model.prototype, {
         /**
@@ -208,10 +207,16 @@ pagination = function pagination(bookshelf) {
                             paginationUtils.handleRelation(self, property);
                         }
                     });
-                } else if (options.orderRaw) {
-                    self.query(function (qb) {
+                }
+
+                if (options.orderRaw) {
+                    self.query((qb) => {
                         qb.orderByRaw(options.orderRaw);
                     });
+                }
+
+                if (!_.isEmpty(options.eagerLoad)) {
+                    options.eagerLoad.forEach(property => paginationUtils.handleRelation(self, property));
                 }
 
                 if (options.groups && !_.isEmpty(options.groups)) {

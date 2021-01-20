@@ -22,6 +22,7 @@ const routingService = require('../../core/frontend/services/routing');
 const settingsService = require('../../core/server/services/settings');
 const frontendSettingsService = require('../../core/frontend/services/settings');
 const settingsCache = require('../../core/server/services/settings/cache');
+const emailAnalyticsService = require('../../core/server/services/email-analytics');
 const imageLib = require('../../core/server/lib/image');
 const web = require('../../core/server/web');
 const permissions = require('../../core/server/services/permissions');
@@ -34,20 +35,9 @@ const APIUtils = require('./api');
 const config = require('../../core/shared/config');
 const knexMigrator = new KnexMigrator();
 let fixtures;
-let getFixtureOps;
 let toDoList;
 let originalRequireFn;
 let postsInserted = 0;
-let teardownDb;
-let setup;
-let truncate;
-let createUser;
-let createPost;
-let startGhost;
-let initFixtures;
-let initData;
-let clearData;
-let clearBruteData;
 
 // Require additional assertions which help us keep our tests small and clear
 require('./assertions');
@@ -131,6 +121,14 @@ fixtures = {
                 return models.Post.add(posts[index], module.exports.context.internal);
             });
         });
+    },
+
+    insertEmailedPosts: function insertEmailedPosts({postCount = 2} = {}) {
+        const posts = [];
+
+        for (let i = 0; i < postCount; i++) {
+            posts.push(DataGenerator.forKnex.createGenericPost);
+        }
     },
 
     insertExtraPosts: function insertExtraPosts(max) {
@@ -502,11 +500,38 @@ fixtures = {
                 return models.StripeCustomerSubscription.add(subscription, module.exports.context.internal);
             });
         });
+    },
+
+    insertEmailsAndRecipients: function insertEmailsAndRecipients() {
+        return Promise.each(_.cloneDeep(DataGenerator.forKnex.emails), function (email) {
+            return models.Email.add(email, module.exports.context.internal);
+        }).then(function () {
+            return Promise.each(_.cloneDeep(DataGenerator.forKnex.email_batches), function (emailBatch) {
+                return models.EmailBatch.add(emailBatch, module.exports.context.internal);
+            });
+        }).then(function () {
+            return Promise.each(_.cloneDeep(DataGenerator.forKnex.email_recipients), (emailRecipient) => {
+                return models.EmailRecipient.add(emailRecipient, module.exports.context.internal);
+            });
+        }).then(function () {
+            const toAggregate = {
+                emailIds: DataGenerator.forKnex.emails.map(email => email.id),
+                memberIds: DataGenerator.forKnex.members.map(member => member.id)
+            };
+
+            return emailAnalyticsService.aggregateStats(toAggregate);
+        });
+    },
+
+    insertSnippets: function insertSnippets() {
+        return Promise.map(DataGenerator.forKnex.snippets, function (snippet) {
+            return models.Snippet.add(snippet, module.exports.context.internal);
+        });
     }
 };
 
 /** Test Utility Functions **/
-initData = function initData() {
+const initData = function initData() {
     return knexMigrator.init()
         .then(function () {
             events.emit('db.ready');
@@ -527,11 +552,11 @@ initData = function initData() {
         });
 };
 
-clearBruteData = function clearBruteData() {
+const clearBruteData = function clearBruteData() {
     return db.knex('brute').truncate();
 };
 
-truncate = function truncate(tableName) {
+const truncate = function truncate(tableName) {
     if (config.get('database:client') === 'sqlite3') {
         return db.knex(tableName).truncate();
     }
@@ -546,7 +571,7 @@ truncate = function truncate(tableName) {
 };
 
 // we must always try to delete all tables
-clearData = function clearData() {
+const clearData = function clearData() {
     debug('Database reset');
     return knexMigrator.reset({force: true})
         .then(function () {
@@ -572,6 +597,9 @@ toDoList = {
     },
     members: function insertMembersAndLabels() {
         return fixtures.insertMembersAndLabels();
+    },
+    'members:emails': function insertEmailsAndRecipients() {
+        return fixtures.insertEmailsAndRecipients();
     },
     posts: function insertPostsAndTags() {
         return fixtures.insertPostsAndTags();
@@ -636,6 +664,9 @@ toDoList = {
     },
     emails: function insertEmails() {
         return fixtures.insertEmails();
+    },
+    snippets: function insertSnippets() {
+        return fixtures.insertSnippets();
     }
 };
 
@@ -651,7 +682,7 @@ toDoList = {
  *  * `users:roles` - create a full suite of users, one per role
  * @param {Object} toDos
  */
-getFixtureOps = function getFixtureOps(toDos) {
+const getFixtureOps = function getFixtureOps(toDos) {
     // default = default fixtures, if it isn't present, init with tables only
     const tablesOnly = !toDos.default;
 
@@ -696,7 +727,7 @@ getFixtureOps = function getFixtureOps(toDos) {
 
 // ## Test Setup and Teardown
 
-initFixtures = function initFixtures() {
+const initFixtures = function initFixtures() {
     const options = _.merge({init: true}, _.transform(arguments, function (result, val) {
         result[val] = true;
     }));
@@ -712,19 +743,19 @@ initFixtures = function initFixtures() {
  * Setup does 'init' (DB) by default
  * @returns {Function}
  */
-setup = function setup() {
+const setup = function setup() {
     /*eslint no-invalid-this: "off"*/
     const self = this;
 
     const args = arguments;
 
-    return function setup() {
+    return function innerSetup() {
         models.init();
         return initFixtures.apply(self, args);
     };
 };
 
-createUser = function createUser(options) {
+const createUser = function createUser(options) {
     const user = options.user;
     const role = options.role;
 
@@ -740,7 +771,7 @@ createUser = function createUser(options) {
         });
 };
 
-createPost = function createPost(options) {
+const createPost = function createPost(options) {
     const post = DataGenerator.forKnex.createPost(options.post);
 
     if (options.author) {
@@ -751,11 +782,24 @@ createPost = function createPost(options) {
     return models.Post.add(post, module.exports.context.internal);
 };
 
+const createEmail = function createEmail(options) {
+    const email = DataGenerator.forKnex.createEmail(options.email);
+    return models.Email.add(email, module.exports.context.internal);
+};
+
+const createEmailedPost = async function createEmailedPost({postOptions, emailOptions}) {
+    const post = await createPost(postOptions);
+    emailOptions.email.post_id = post.id;
+    const email = await createEmail(emailOptions);
+
+    return {post, email};
+};
+
 /**
  * Has to run in a transaction for MySQL, otherwise the foreign key check does not work.
  * Sqlite3 has no truncate command.
  */
-teardownDb = function teardownDb() {
+const teardownDb = function teardownDb() {
     debug('Database teardown');
     urlService.softReset();
 
@@ -798,6 +842,37 @@ teardownDb = function teardownDb() {
     });
 };
 
+/**
+ * Set up the redirects file with the extension you want.
+ */
+const setupRedirectsFile = (contentFolderForTests, ext) => {
+    const yamlPath = path.join(contentFolderForTests, 'data', 'redirects.yaml');
+    const jsonPath = path.join(contentFolderForTests, 'data', 'redirects.json');
+
+    if (ext === '.json') {
+        if (fs.existsSync(yamlPath)) {
+            fs.removeSync(yamlPath);
+        }
+        fs.copySync(path.join(__dirname, 'fixtures', 'data', 'redirects.json'), jsonPath);
+    }
+
+    if (ext === '.yaml') {
+        if (fs.existsSync(jsonPath)) {
+            fs.removeSync(jsonPath);
+        }
+        fs.copySync(path.join(__dirname, 'fixtures', 'data', 'redirects.yaml'), yamlPath);
+    }
+
+    if (ext === null) {
+        if (fs.existsSync(yamlPath)) {
+            fs.removeSync(yamlPath);
+        }
+        if (fs.existsSync(jsonPath)) {
+            fs.removeSync(jsonPath);
+        }
+    }
+};
+
 let ghostServer;
 
 /**
@@ -806,10 +881,11 @@ let ghostServer;
  *
  * @TODO: tidy up the tmp folders
  */
-startGhost = function startGhost(options) {
+const startGhost = function startGhost(options) {
     console.time('Start Ghost'); // eslint-disable-line no-console
     options = _.merge({
         redirectsFile: true,
+        redirectsFileExt: '.json',
         forceStart: false,
         copyThemes: true,
         copySettings: true,
@@ -840,7 +916,7 @@ startGhost = function startGhost(options) {
     }
 
     if (options.redirectsFile) {
-        fs.copySync(path.join(__dirname, 'fixtures', 'data', 'redirects.json'), path.join(contentFolderForTests, 'data', 'redirects.json'));
+        setupRedirectsFile(contentFolderForTests, options.redirectsFileExt);
     }
 
     if (options.copySettings) {
@@ -939,7 +1015,7 @@ startGhost = function startGhost(options) {
 
             return ghost();
         })
-        .then(function startGhost(_ghostServer) {
+        .then(function startGhostServer(_ghostServer) {
             ghostServer = _ghostServer;
 
             if (options.subdir) {
@@ -1011,9 +1087,9 @@ module.exports = {
     },
 
     integrationTesting: {
-        overrideGhostConfig: function overrideGhostConfig(configUtils) {
-            configUtils.set('paths:contentPath', path.join(__dirname, 'fixtures'));
-            configUtils.set('times:getImageSizeTimeoutInMS', 1);
+        overrideGhostConfig: function overrideGhostConfig(utils) {
+            utils.set('paths:contentPath', path.join(__dirname, 'fixtures'));
+            utils.set('times:getImageSizeTimeoutInMS', 1);
         },
 
         defaultMocks: function defaultMocks(sandbox, options) {
@@ -1101,6 +1177,7 @@ module.exports = {
     setup: setup,
     createUser: createUser,
     createPost: createPost,
+    createEmailedPost,
 
     /**
      * renderObject:    res.render(view, dbResponse)
@@ -1134,6 +1211,7 @@ module.exports = {
     initData: initData,
     clearData: clearData,
     clearBruteData: clearBruteData,
+    setupRedirectsFile,
 
     fixtures: fixtures,
 

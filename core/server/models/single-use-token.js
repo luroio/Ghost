@@ -1,5 +1,6 @@
 const ghostBookshelf = require('./base');
 const crypto = require('crypto');
+const logging = require('../../shared/logging');
 
 const SingleUseToken = ghostBookshelf.Model.extend({
     tableName: 'tokens',
@@ -10,25 +11,29 @@ const SingleUseToken = ghostBookshelf.Model.extend({
                 .randomBytes(192 / 8)
                 .toString('base64')
                 // base64url encoding means the tokens are URL safe
-                .replace('+', '-')
-                .replace('/', '_')
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
         };
     }
 }, {
     async findOne(data, unfilteredOptions = {}) {
-        if (!unfilteredOptions.transacting) {
-            return ghostBookshelf.transaction((transacting) => {
-                return this.findOne(data, Object.assign({transacting}, unfilteredOptions));
-            });
-        }
         const model = await ghostBookshelf.Model.findOne.call(this, data, unfilteredOptions);
 
         if (model) {
-            await this.destroy(Object.assign({
-                destroyBy: {
-                    id: model.id
+            setTimeout(async () => {
+                try {
+                    await this.destroy(Object.assign({
+                        destroyBy: {
+                            id: model.id
+                        }
+                    }, {
+                        ...unfilteredOptions,
+                        transacting: null
+                    }));
+                } catch (err) {
+                    logging.error(err);
                 }
-            }, unfilteredOptions));
+            }, 10000);
         }
 
         return model;

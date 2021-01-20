@@ -11,15 +11,26 @@ const Member = ghostBookshelf.Model.extend({
     defaults() {
         return {
             subscribed: true,
-            uuid: uuid.v4()
+            uuid: uuid.v4(),
+            email_count: 0,
+            email_opened_count: 0
         };
     },
 
-    relationships: ['labels', 'stripeCustomers'],
+    relationships: ['labels', 'stripeCustomers', 'email_recipients'],
+
+    // do not delete email_recipients records when a member is destroyed. Recipient
+    // records are used for analytics and historical records
+    relationshipConfig: {
+        email_recipients: {
+            destroyRelated: false
+        }
+    },
 
     relationshipBelongsTo: {
         labels: 'labels',
-        stripeCustomers: 'members_stripe_customers'
+        stripeCustomers: 'members_stripe_customers',
+        email_recipients: 'email_recipients'
     },
 
     labels: function labels() {
@@ -45,7 +56,11 @@ const Member = ghostBookshelf.Model.extend({
             'customer_id',
             'id',
             'customer_id'
-        ).query('whereIn', 'status', ['active', 'trialing']);
+        );
+    },
+
+    email_recipients() {
+        return this.hasMany('EmailRecipient', 'member_id', 'id');
     },
 
     serialize(options) {
@@ -142,14 +157,14 @@ const Member = ghostBookshelf.Model.extend({
          * For the reason above, `detached` handler is using the scope of `detaching`
          * to access the models that are not present in `detached`.
          */
-        model.related('labels').once('detaching', function onDetached(collection, label) {
+        model.related('labels').once('detaching', function onDetaching(collection, label) {
             model.related('labels').once('detached', function onDetached(detachedCollection, response, options) {
                 label.emitChange('detached', options);
                 model.emitChange('label.detached', options);
             });
         });
 
-        model.related('labels').once('attaching', function onDetached(collection, labels) {
+        model.related('labels').once('attaching', function onDetaching(collection, labels) {
             model.related('labels').once('attached', function onDetached(detachedCollection, response, options) {
                 labels.forEach((label) => {
                     label.emitChange('attached', options);
@@ -211,7 +226,7 @@ const Member = ghostBookshelf.Model.extend({
                         'members_stripe_customers_subscriptions.customer_id'
                     ).onIn(
                         'members_stripe_customers_subscriptions.status',
-                        ['active', 'trialing']
+                        ['active', 'trialing', 'past_due', 'unpaid']
                     );
                 }
             );
@@ -224,6 +239,14 @@ const Member = ghostBookshelf.Model.extend({
                 'members_stripe_customers.member_id'
             );
             queryBuilder.whereNull('members_stripe_customers.member_id');
+        }
+    },
+
+    orderRawQuery(field, direction) {
+        if (field === 'email_open_rate') {
+            return {
+                orderByRaw: `members.email_open_rate IS NOT NULL DESC, members.email_open_rate ${direction}`
+            };
         }
     },
 

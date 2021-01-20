@@ -245,8 +245,12 @@ User = ghostBookshelf.Model.extend({
         return this.belongsToMany('Role');
     },
 
-    permissions: function permissions() {
+    permissions: function permissionsFn() {
         return this.belongsToMany('Permission');
+    },
+
+    apiKeys() {
+        return this.hasMany('ApiKey', 'user_id');
     },
 
     hasRole: function hasRole(roleName) {

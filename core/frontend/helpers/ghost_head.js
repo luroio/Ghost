@@ -8,19 +8,18 @@ const debug = require('ghost-ignition').debug('ghost_head');
 const templateStyles = require('./tpl/styles');
 
 const getMetaData = metaData.get;
-const getAssetUrl = metaData.getAssetUrl;
 
 function writeMetaTag(property, content, type) {
     type = type || property.substring(0, 7) === 'twitter' ? 'name' : 'property';
     return '<meta ' + type + '="' + property + '" content="' + content + '" />';
 }
 
-function finaliseStructuredData(metaData) {
+function finaliseStructuredData(meta) {
     const head = [];
 
-    _.each(metaData.structuredData, function (content, property) {
+    _.each(meta.structuredData, function (content, property) {
         if (property === 'article:tag') {
-            _.each(metaData.keywords, function (keyword) {
+            _.each(meta.keywords, function (keyword) {
                 if (keyword !== '') {
                     keyword = escapeExpression(keyword);
                     head.push(writeMetaTag(property,
@@ -42,11 +41,8 @@ function getMembersHelper() {
     const stripeDirectPublishableKey = settingsCache.get('stripe_publishable_key');
     const stripeConnectAccountId = settingsCache.get('stripe_connect_account_id');
 
-    let membersHelper = `<script defer src="${getAssetUrl('public/members.js', true)}"></script>`;
-    if (config.get('enableDeveloperExperiments') || config.get('portal')) {
-        membersHelper = `<script defer src="https://unpkg.com/@tryghost/portal@latest/umd/portal.min.js" data-ghost="${urlUtils.getSiteUrl()}"></script>`;
-        membersHelper += (`<style type='text/css'> ${templateStyles}</style>`);
-    }
+    let membersHelper = `<script defer src="https://unpkg.com/@tryghost/portal@~0.15.0/umd/portal.min.js" data-ghost="${urlUtils.getSiteUrl()}"></script>`;
+    membersHelper += (`<style> ${templateStyles}</style>`);
     if ((!!stripeDirectSecretKey && !!stripeDirectPublishableKey) || !!stripeConnectAccountId) {
         membersHelper += '<script async src="https://js.stripe.com/v3/"></script>';
     }
@@ -120,13 +116,13 @@ module.exports = function ghost_head(options) { // eslint-disable-line camelcase
      *   - it should not break anything
      */
     return getMetaData(dataRoot, dataRoot)
-        .then(function handleMetaData(metaData) {
+        .then(function handleMetaData(meta) {
             debug('end fetch');
 
             if (context) {
                 // head is our main array that holds our meta data
-                if (metaData.metaDescription && metaData.metaDescription.length > 0) {
-                    head.push('<meta name="description" content="' + escapeExpression(metaData.metaDescription) + '" />');
+                if (meta.metaDescription && meta.metaDescription.length > 0) {
+                    head.push('<meta name="description" content="' + escapeExpression(meta.metaDescription) + '" />');
                 }
 
                 // no output in head if a publication icon is not set
@@ -135,7 +131,7 @@ module.exports = function ghost_head(options) { // eslint-disable-line camelcase
                 }
 
                 head.push('<link rel="canonical" href="' +
-                    escapeExpression(metaData.canonicalUrl) + '" />');
+                    escapeExpression(meta.canonicalUrl) + '" />');
                 head.push('<meta name="referrer" content="' + referrerPolicy + '" />');
 
                 // don't allow indexing of preview URLs!
@@ -146,27 +142,27 @@ module.exports = function ghost_head(options) { // eslint-disable-line camelcase
                 // show amp link in post when 1. we are not on the amp page and 2. amp is enabled
                 if (_.includes(context, 'post') && !_.includes(context, 'amp') && settingsCache.get('amp')) {
                     head.push('<link rel="amphtml" href="' +
-                        escapeExpression(metaData.ampUrl) + '" />');
+                        escapeExpression(meta.ampUrl) + '" />');
                 }
 
-                if (metaData.previousUrl) {
+                if (meta.previousUrl) {
                     head.push('<link rel="prev" href="' +
-                        escapeExpression(metaData.previousUrl) + '" />');
+                        escapeExpression(meta.previousUrl) + '" />');
                 }
 
-                if (metaData.nextUrl) {
+                if (meta.nextUrl) {
                     head.push('<link rel="next" href="' +
-                        escapeExpression(metaData.nextUrl) + '" />');
+                        escapeExpression(meta.nextUrl) + '" />');
                 }
 
                 if (!_.includes(context, 'paged') && useStructuredData) {
                     head.push('');
-                    head.push.apply(head, finaliseStructuredData(metaData));
+                    head.push.apply(head, finaliseStructuredData(meta));
                     head.push('');
 
-                    if (metaData.schema) {
+                    if (meta.schema) {
                         head.push('<script type="application/ld+json">\n' +
-                            JSON.stringify(metaData.schema, null, '    ') +
+                            JSON.stringify(meta.schema, null, '    ') +
                             '\n    </script>\n');
                     }
                 }
@@ -180,8 +176,8 @@ module.exports = function ghost_head(options) { // eslint-disable-line camelcase
                 escapeExpression(safeVersion) + '" />');
 
             head.push('<link rel="alternate" type="application/rss+xml" title="' +
-                escapeExpression(metaData.site.title) + '" href="' +
-                escapeExpression(metaData.rssUrl) + '" />');
+                escapeExpression(meta.site.title) + '" href="' +
+                escapeExpression(meta.rssUrl) + '" />');
 
             // no code injection for amp context!!!
             if (!_.includes(context, 'amp')) {
